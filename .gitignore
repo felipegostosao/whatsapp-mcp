@@ -10,3 +10,5 @@ regras-respostas.md
 .pendentes-estado.json
 *.log
 graft/
+ESTILO.md
+.DS_Store
