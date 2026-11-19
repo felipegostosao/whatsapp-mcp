@@ -1,5 +1,12 @@
 *.db
 claude_desktop_config.json
-whatsapp.log.DS_Store
+whatsapp.log
+.DS_Store
 whatsapp-bridge/store/
 whatsapp-bridge/whatsapp-bridge
+
+# pessoais / gerados
+regras-respostas.md
+.pendentes-estado.json
+*.log
+graft/

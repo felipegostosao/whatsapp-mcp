@@ -368,10 +368,50 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 	}
 
 	// Send message
-	_, err = client.SendMessage(context.Background(), recipientJID, msg)
+	sendResp, err := client.SendMessage(context.Background(), recipientJID, msg)
 
 	if err != nil {
 		return false, fmt.Sprintf("Error sending message: %v", err)
+	}
+
+	// Grava a mensagem enviada no banco local, como as recebidas
+	if sentStore != nil {
+		sentMediaType, sentFilename := "", ""
+		if mediaPath != "" {
+			ext := strings.ToLower(mediaPath[strings.LastIndex(mediaPath, ".")+1:])
+			switch ext {
+			case "jpg", "jpeg", "png", "gif", "webp":
+				sentMediaType = "image"
+			case "ogg":
+				sentMediaType = "audio"
+			case "mp4", "avi", "mov":
+				sentMediaType = "video"
+			default:
+				sentMediaType = "document"
+			}
+			sentFilename = mediaPath[strings.LastIndex(mediaPath, "/")+1:]
+		}
+		ts := sendResp.Timestamp
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+		chatJID := recipientJID.String()
+		sender := ""
+		if client.Store.ID != nil {
+			sender = client.Store.ID.User
+		}
+		var name string
+		_ = sentStore.db.QueryRow("SELECT name FROM chats WHERE jid = ?", chatJID).Scan(&name)
+		if name == "" {
+			name = recipientJID.User
+		}
+		if err := sentStore.StoreChat(chatJID, name, ts); err != nil {
+			fmt.Println("Failed to store sent chat:", err)
+		}
+		if err := sentStore.StoreMessage(sendResp.ID, chatJID, sender, message, ts, true,
+			sentMediaType, sentFilename, "", nil, nil, nil, 0); err != nil {
+			fmt.Println("Failed to store sent message:", err)
+		}
 	}
 
 	return true, fmt.Sprintf("Message sent to %s", recipient)
@@ -812,7 +852,11 @@ func handleMediaRetry(client *whatsmeow.Client, evt *events.MediaRetry) {
 }
 
 // Start a REST API server to expose the WhatsApp client functionality
+// sentStore grava no banco local as mensagens enviadas pela API
+var sentStore *MessageStore
+
 func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port int) {
+	sentStore = messageStore
 	// Handler for sending messages
 	http.HandleFunc("/api/send", func(w http.ResponseWriter, r *http.Request) {
 		// Only allow POST requests
