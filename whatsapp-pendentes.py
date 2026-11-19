@@ -7,7 +7,7 @@ Sem IA: lê o banco local da ponte, abre um cartão por conversa no Knobler
 vai pela ponte (localhost:8099/api/send). "Ignorar" fecha sem enviar.
 Knobler fechado: cai para a notificação comum do macOS.
 """
-import sqlite3, subprocess, json, os, sys, time, datetime as dt, urllib.request
+import sqlite3, subprocess, json, os, sys, time, datetime as dt, urllib.request, urllib.error
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = f"{BASE}/whatsapp-bridge/store/messages.db"
@@ -18,6 +18,15 @@ JANELA_PADRAO_MIN = 20
 NOME = os.getenv("WA_NOME", "o dono do número")  # como chamar você no prompt da sugestão
 ESPERA_MAX_H = 12
 IGNORAR = "Ignorar"
+
+LOG = os.path.expanduser("~/Library/Logs/whatsapp-pendentes.log")
+
+def log(*a):
+    try:
+        with open(LOG, "a") as f:
+            f.write(dt.datetime.now().strftime("%m-%d %H:%M:%S ") + " ".join(str(x) for x in a) + "\n")
+    except Exception:
+        pass
 
 def agora():
     return dt.datetime.now().astimezone().isoformat(sep=" ", timespec="seconds")
@@ -50,6 +59,36 @@ def notificar_mac(titulo, texto):
     subprocess.run(["osascript", "-e",
         f'display notification "{esc(texto)}" with title "{esc(titulo)}" sound name "Glass"'])
 
+SESSAO = f"{BASE}/whatsapp-bridge/store/whatsapp.db"
+
+def telefone_fmt(num):
+    if num.startswith("55") and len(num) in (12, 13):
+        return f"+55 {num[2:4]} {num[4:-4]}-{num[-4:]}"
+    return "+" + num
+
+def identificar(jid):
+    """Nome do contato + telefone real. Converte o código interno (@lid) no número."""
+    usuario = jid.split("@")[0]
+    tel = usuario
+    try:
+        con = sqlite3.connect(f"file:{SESSAO}?mode=ro", uri=True)
+        if jid.endswith("@lid"):
+            r = con.execute("SELECT pn FROM whatsmeow_lid_map WHERE lid = ?", (usuario,)).fetchone()
+            tel = r[0] if r else None
+        nome = None
+        if tel:
+            r = con.execute("SELECT COALESCE(NULLIF(full_name,''), NULLIF(push_name,''), NULLIF(business_name,'')) "
+                            "FROM whatsmeow_contacts WHERE their_jid = ?", (f"{tel}@s.whatsapp.net",)).fetchone()
+            nome = r[0] if r else None
+        con.close()
+    except Exception:
+        nome = None
+    if tel and nome:
+        return f"{nome} ({telefone_fmt(tel)})"
+    if tel:
+        return telefone_fmt(tel)
+    return f"contato sem número visível ({usuario})"
+
 def pendentes(desde):
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     chats = con.execute("""
@@ -74,7 +113,7 @@ def pendentes(desde):
             ORDER BY timestamp DESC LIMIT 4
         """, (jid, jid)).fetchall()[::-1]
         linhas = [t[11:16] + "  " + (c or "[" + (m or "mídia") + "]").strip()[:300] for c, m, t in msgs]
-        res.append((jid, nome, "\n".join(linhas)))
+        res.append((jid, identificar(jid), "\n".join(linhas)))
     con.close()
     return res
 
@@ -133,6 +172,8 @@ def cartao(jid, nome, texto):
         notificar_mac(f"WhatsApp: {nome}", texto.split("\n")[-1][7:120])
         e = ler_estado(); e["abertos"].pop(jid, None); gravar_estado(e)
         return
+    log("cartão aberto", cid, jid, "com sugestão" if sug else "sem sugestão")
+    e = ler_estado(); e["abertos"][jid] = cid; gravar_estado(e)
     esperar(cid, jid, pergunta, sug)
 
 def esperar(cid, jid, pergunta, sug=None):
@@ -140,9 +181,17 @@ def esperar(cid, jid, pergunta, sug=None):
     while time.time() < fim:
         try:
             st = http("GET", f"{KNOBLER}/ask/{cid}", timeout=30, headers={"X-Knobler-Wait": "25"})
+        except urllib.error.HTTPError as err:
+            if err.code == 404:  # o Knobler esqueceu o cartão (app reiniciado ou cartão consumido)
+                log("cartão sumiu do Knobler", cid, jid)
+                notificar_mac("WhatsApp: cartão perdido", "Abra de novo pelo Claude: " + jid.split("@")[0])
+                break
+            time.sleep(10)
+            continue
         except Exception:
             time.sleep(10)
             continue
+        log("estado", cid, json.dumps(st, ensure_ascii=False)[:300])
         if st.get("cancelled"):
             break
         if st.get("answered"):
@@ -153,6 +202,7 @@ def esperar(cid, jid, pergunta, sug=None):
             if texto:
                 try:
                     r = http("POST", PONTE, {"recipient": jid, "message": texto}, timeout=20)
+                    log("enviado", jid, r)
                     if not r.get("success", True):
                         notificar_mac("WhatsApp: não enviou", r.get("message", "erro na ponte"))
                 except Exception as e:
