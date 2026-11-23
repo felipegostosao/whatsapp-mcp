@@ -19,7 +19,6 @@ cat > "$PLIST" <<EOF
 <dict>
   <key>Label</key><string>$ROTULO</string>
   <key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>$PASTA/transcrever-audios.py</string></array>
-  <key>EnvironmentVariables</key><dict><key>WA_NOME</key><string>$NOME</string></dict>
   <key>StartInterval</key><integer>$INTERVALO</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardErrorPath</key><string>$LOG</string>
