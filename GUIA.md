@@ -36,6 +36,7 @@ whatsapp-bridge  (Go, serviço do macOS, porta 8099)
 | Ponte | Mantém a conexão com o WhatsApp, guarda mensagens, expõe a API de envio | `whatsapp-bridge/` |
 | Servidor MCP | Dá as ferramentas de WhatsApp ao Claude | `whatsapp-mcp-server/` |
 | Aviso de pendentes | Detecta conversas sem resposta e abre cartões no Knobler | `whatsapp-pendentes.py` |
+| Transcrição de áudios | Transcreve áudios recebidos e enviados, no Mac, a cada minuto | `transcrever-audios.py` |
 | Regras de resposta | Tom de voz e regras por contato usadas na sugestão | `regras-respostas.md` (pessoal, fora do git) |
 | Estilo de escrita | Referência de tom para o Claude ao escrever por você | `ESTILO.md` |
 
@@ -89,6 +90,27 @@ Na primeira vez ele cria `regras-respostas.md` a partir de `regras-respostas.exe
 Edite esse arquivo com seu jeito de escrever e as regras por contato.
 
 Opcional: `WA_INTERVALO=600` muda o intervalo (em segundos).
+
+### 5. Transcrição automática de áudios (grátis, offline)
+
+A transcrição nativa do WhatsApp é feita no celular e não viaja com a mensagem: a ponte
+recebe só o arquivo `.ogg`. Por isso transcrevemos no próprio Mac com o whisper.cpp.
+
+```bash
+brew install whisper-cpp ffmpeg
+mkdir -p ~/.whisper-models
+curl -L -o ~/.whisper-models/ggml-large-v3-turbo.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+./servico-transcricao.sh
+```
+
+A cada minuto, todo áudio novo de conversa individual (grupos ficam de fora) é baixado,
+transcrito em português e gravado na mensagem como `🎤 <texto>`. Assim o Claude, as
+revisões e os cartões do Knobler entendem o que foi dito. Um áudio de 1 minuto leva
+poucos segundos. Nada sai do Mac e não há custo.
+
+Ajustes: `TRANSCREVER_DIAS` (padrão 3, só áudios recentes), `WHISPER_MODELO`.
+Log: `~/Library/Logs/whatsapp-transcricao.log`.
 
 ---
 
